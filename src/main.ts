@@ -14,9 +14,12 @@ import {
   type BakedFlipbook,
 } from './export/bakeFlipbook';
 
+type Effect = 'muzzleFlash' | 'smoke';
+
 const container = document.getElementById('app') as HTMLDivElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
 const previewFrame = document.getElementById('preview-frame') as HTMLDivElement;
+const previewLabel = document.getElementById('preview-label') as HTMLDivElement;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -35,7 +38,7 @@ const camera = new THREE.PerspectiveCamera(
   100,
 );
 camera.position.set(2.2, 1.6, 2.8);
-camera.lookAt(0, 0.8, 0);
+camera.lookAt(0, 0.9, 0);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.65));
 const dir = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -49,9 +52,14 @@ const ground = new THREE.Mesh(
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
+const muzzleFlashRig = new THREE.Group();
+scene.add(muzzleFlashRig);
+const smokeRig = new THREE.Group();
+scene.add(smokeRig);
+
 const gun = buildGun();
 gun.position.set(-0.4, 0.8, 0);
-scene.add(gun);
+muzzleFlashRig.add(gun);
 const barrelTip = new THREE.Vector3(0.55, 0.8, 0);
 
 const atlasPool: MuzzleFlashAtlas[] = [1, 2, 3, 7, 42].map((seed) =>
@@ -81,11 +89,11 @@ function fire(): void {
     onComplete: () => cleanupFlash(sprite),
   });
   sprite.position.copy(barrelTip);
-  scene.add(sprite);
+  muzzleFlashRig.add(sprite);
 
   const light = new THREE.PointLight(0xffaa55, 0, 5, 1.8);
   light.position.copy(barrelTip);
-  scene.add(light);
+  muzzleFlashRig.add(light);
 
   activeFlashes.push({
     sprite,
@@ -99,10 +107,19 @@ function cleanupFlash(sprite: FlipbookSprite): void {
   const idx = activeFlashes.findIndex((a) => a.sprite === sprite);
   if (idx < 0) return;
   const entry = activeFlashes[idx];
-  scene.remove(entry.sprite);
-  scene.remove(entry.light);
+  muzzleFlashRig.remove(entry.sprite);
+  muzzleFlashRig.remove(entry.light);
   entry.sprite.dispose();
   activeFlashes.splice(idx, 1);
+}
+
+function clearActiveFlashes(): void {
+  for (const entry of activeFlashes) {
+    muzzleFlashRig.remove(entry.sprite);
+    muzzleFlashRig.remove(entry.light);
+    entry.sprite.dispose();
+  }
+  activeFlashes.length = 0;
 }
 
 function buildGun(): THREE.Group {
@@ -150,17 +167,8 @@ const previewQuad = new FullScreenQuad(
   new THREE.MeshBasicMaterial({ map: fluid.densityTexture, toneMapped: false }),
 );
 
-window.addEventListener('click', (e) => {
-  if (!isEventInsidePreview(e)) fire();
-});
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') {
-    e.preventDefault();
-    fire();
-  }
-});
-
 const params = {
+  effect: 'muzzleFlash' as Effect,
   autoFire: true,
   fireInterval: 1.0,
   emitDye: true,
@@ -182,44 +190,19 @@ const params = {
   bake: () => void bakeAndSpawn(),
 };
 
-function applyDyePreset(): void {
-  params.emitDye = true;
-  params.splatRadius = 0.00016;
-  params.splatSpeed = 600;
-  params.velocityDissipation = 0.2;
-  params.densityDissipation = 1.0;
-  params.buoyancy = 0;
-  params.smokeMode = false;
-  syncSimParams();
-  gui.controllers.forEach((c) => c.updateDisplay());
-  simFolder.controllers.forEach((c) => c.updateDisplay());
-}
-
-function applySmokePreset(): void {
-  params.emitDye = true;
-  params.splatRadius = 0.00045;
-  params.splatSpeed = 120;
-  params.velocityDissipation = 0.08;
-  params.densityDissipation = 0.4;
-  params.buoyancy = 35;
-  params.smokeMode = true;
-  syncSimParams();
-  gui.controllers.forEach((c) => c.updateDisplay());
-  simFolder.controllers.forEach((c) => c.updateDisplay());
-}
-
-function syncSimParams(): void {
-  fluid.velocityDissipation = params.velocityDissipation;
-  fluid.densityDissipation = params.densityDissipation;
-  fluid.pressureIterations = params.pressureIterations;
-  fluid.buoyancy = params.buoyancy;
-}
-
 const splatColorTarget = new THREE.Color();
 const splatPoint = new THREE.Vector2(0.5, 0.12);
 const splatVelocity = new THREE.Vector2();
 
 const gui = new GUI({ title: 'EmberThree' });
+const effectController = gui
+  .add(params, 'effect', {
+    'Muzzle Flash': 'muzzleFlash',
+    'Smoke / Fluid': 'smoke',
+  })
+  .name('effect')
+  .onChange((v: Effect) => applyEffect(v));
+
 const fxFolder = gui.addFolder('Muzzle flash');
 fxFolder.add(params, 'autoFire').name('auto-fire');
 fxFolder.add(params, 'fireInterval', 0.15, 3, 0.05).name('interval (s)');
@@ -264,11 +247,81 @@ bakeFolder.add(params, 'bakeFps', 6, 60, 1).name('playback fps');
 bakeFolder.add(params, 'bakeDownload').name('download PNG+JSON');
 const bakeButton = bakeFolder.add(params, 'bake').name('bake flipbook');
 
+function applyDyePreset(): void {
+  params.emitDye = true;
+  params.splatRadius = 0.00016;
+  params.splatSpeed = 600;
+  params.velocityDissipation = 0.2;
+  params.densityDissipation = 1.0;
+  params.buoyancy = 0;
+  params.smokeMode = false;
+  syncSimParams();
+  simFolder.controllers.forEach((c) => c.updateDisplay());
+}
+
+function applySmokePreset(): void {
+  params.emitDye = true;
+  params.splatRadius = 0.00045;
+  params.splatSpeed = 120;
+  params.velocityDissipation = 0.08;
+  params.densityDissipation = 0.4;
+  params.buoyancy = 35;
+  params.smokeMode = true;
+  syncSimParams();
+  simFolder.controllers.forEach((c) => c.updateDisplay());
+}
+
+function syncSimParams(): void {
+  fluid.velocityDissipation = params.velocityDissipation;
+  fluid.densityDissipation = params.densityDissipation;
+  fluid.pressureIterations = params.pressureIterations;
+  fluid.buoyancy = params.buoyancy;
+}
+
+function applyEffect(effect: Effect): void {
+  const muzzle = effect === 'muzzleFlash';
+  muzzleFlashRig.visible = muzzle;
+  smokeRig.visible = !muzzle;
+  if (muzzle) {
+    fluid.clear();
+    fxFolder.show();
+    simFolder.hide();
+    bakeFolder.hide();
+    previewFrame.style.display = 'none';
+    previewLabel.style.display = 'none';
+    hud.textContent = 'EmberThree — Muzzle Flash · click scene or press space to fire';
+  } else {
+    clearActiveFlashes();
+    fxFolder.hide();
+    simFolder.show();
+    bakeFolder.show();
+    previewFrame.style.display = 'block';
+    previewLabel.style.display = 'block';
+    hud.textContent = bakedSprite
+      ? 'EmberThree — Smoke / Fluid · tweak sim, drag on preview, rebake to update scene'
+      : 'EmberThree — Smoke / Fluid · tweak sim in preview, then click Bake to produce a flipbook';
+  }
+}
+
 let autoFireAt = performance.now() / 1000 + params.fireInterval;
 let prevSimTime: number | null = null;
 let baking = false;
 let bakedSprite: FlipbookSprite | null = null;
-hud.textContent = 'EmberThree — Phase 3 · click scene to fire · space to fire';
+
+applyEffect(params.effect);
+
+window.addEventListener('click', (e) => {
+  if (params.effect !== 'muzzleFlash') return;
+  if (isEventInsidePreview(e)) return;
+  fire();
+});
+window.addEventListener('keydown', (e) => {
+  if (params.effect !== 'muzzleFlash') return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    fire();
+  }
+});
 
 function simEmit(now: number): void {
   if (!params.emitDye) return;
@@ -285,6 +338,11 @@ function simEmit(now: number): void {
 
 async function bakeAndSpawn(): Promise<void> {
   if (baking) return;
+  if (params.effect !== 'smoke') {
+    params.effect = 'smoke';
+    effectController.updateDisplay();
+    applyEffect('smoke');
+  }
   baking = true;
   bakeButton.disable();
   hud.textContent = 'Baking flipbook… 0%';
@@ -313,7 +371,7 @@ async function bakeAndSpawn(): Promise<void> {
     if (params.bakeDownload) {
       downloadFlipbook(baked, `emberthree-${params.smokeMode ? 'smoke' : 'dye'}`);
     }
-    hud.textContent = 'Baked · ready for playback in scene';
+    hud.textContent = 'Baked · playing in scene · tweak & rebake to iterate';
   } finally {
     baking = false;
     bakeButton.enable();
@@ -322,7 +380,7 @@ async function bakeAndSpawn(): Promise<void> {
 
 function spawnBakedSprite(baked: BakedFlipbook): void {
   if (bakedSprite) {
-    scene.remove(bakedSprite);
+    smokeRig.remove(bakedSprite);
     bakedSprite.dispose();
   }
   bakedSprite = new FlipbookSprite({
@@ -331,12 +389,12 @@ function spawnBakedSprite(baked: BakedFlipbook): void {
     rows: baked.rows,
     frameCount: baked.frameCount,
     fps: baked.fps,
-    size: 1.8,
+    size: 2.0,
     loop: true,
     blending: THREE.NormalBlending,
   });
-  bakedSprite.position.set(1.6, 1.0, -0.3);
-  scene.add(bakedSprite);
+  bakedSprite.position.set(0, 1.1, 0);
+  smokeRig.add(bakedSprite);
 }
 
 window.addEventListener('resize', () => {
@@ -350,17 +408,16 @@ renderer.setAnimationLoop(() => {
   const dt = prevSimTime === null ? 1 / 60 : Math.min(now - prevSimTime, 1 / 30);
   prevSimTime = now;
 
-  if (params.autoFire && now >= autoFireAt) {
-    fire();
-    autoFireAt = now + params.fireInterval;
-  }
-
-  for (const entry of activeFlashes) {
-    const t = Math.min((now - entry.startTime) / entry.duration, 1);
-    entry.light.intensity = 18 * flashEnvelope(t);
-  }
-
-  if (!baking) {
+  if (params.effect === 'muzzleFlash') {
+    if (params.autoFire && now >= autoFireAt) {
+      fire();
+      autoFireAt = now + params.fireInterval;
+    }
+    for (const entry of activeFlashes) {
+      const t = Math.min((now - entry.startTime) / entry.duration, 1);
+      entry.light.intensity = 18 * flashEnvelope(t);
+    }
+  } else if (!baking) {
     simEmit(now);
     fluid.step(dt);
   }
@@ -375,7 +432,9 @@ renderer.setAnimationLoop(() => {
   renderer.clear();
   renderer.render(scene, camera);
 
-  renderPreview();
+  if (params.effect === 'smoke') {
+    renderPreview();
+  }
 });
 
 function renderPreview(): void {
@@ -417,6 +476,7 @@ const dragVelocity = new THREE.Vector2();
 
 previewFrame.style.cursor = 'crosshair';
 previewFrame.addEventListener('pointerdown', (e) => {
+  if (params.effect !== 'smoke') return;
   e.preventDefault();
   (e.target as Element).setPointerCapture(e.pointerId);
   const rect = previewFrame.getBoundingClientRect();
