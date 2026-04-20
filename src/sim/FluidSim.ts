@@ -217,6 +217,8 @@ export class FluidSim {
     uniforms.uColor.value.set(velocity.x, velocity.y, 0);
     this.runPass(this.splatMaterial, this.velocity.write);
     this.velocity.swap();
+
+    this.renderer.setRenderTarget(null);
   }
 
   clear(): void {
@@ -282,6 +284,8 @@ export class FluidSim {
     advU.uDissipation.value = this.densityDissipation;
     this.runPass(this.advectionMaterial, this.density.write);
     this.density.swap();
+
+    this.renderer.setRenderTarget(null);
   }
 
   private runPass(
