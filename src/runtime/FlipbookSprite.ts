@@ -11,6 +11,9 @@ export interface FlipbookSpriteOptions {
   loop?: boolean;
   size?: number;
   aspect?: number;
+  blending?: THREE.Blending;
+  autoplay?: boolean;
+  onComplete?: () => void;
 }
 
 const MAX_CLAMP_DT = 0.1;
@@ -21,8 +24,11 @@ export class FlipbookSprite extends THREE.Mesh {
   private readonly frameCount: number;
   private readonly fps: number;
   private readonly loop: boolean;
+  private readonly onComplete?: () => void;
   private time = 0;
   private lastTime: number | null = null;
+  private playing: boolean;
+  private completed = false;
 
   constructor(options: FlipbookSpriteOptions) {
     const {
@@ -34,6 +40,9 @@ export class FlipbookSprite extends THREE.Mesh {
       loop = true,
       size = 1,
       aspect = 1,
+      blending = THREE.NormalBlending,
+      autoplay = true,
+      onComplete,
     } = options;
 
     const geometry = new THREE.PlaneGeometry(aspect * size, size);
@@ -49,6 +58,7 @@ export class FlipbookSprite extends THREE.Mesh {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      blending,
     });
 
     super(geometry, material);
@@ -56,8 +66,24 @@ export class FlipbookSprite extends THREE.Mesh {
     this.frameCount = frameCount;
     this.fps = fps;
     this.loop = loop;
+    this.onComplete = onComplete;
+    this.playing = autoplay;
 
     this.onBeforeRender = (_renderer, _scene, camera) => this.tick(camera);
+  }
+
+  play(): void {
+    this.time = 0;
+    this.lastTime = null;
+    this.completed = false;
+    this.playing = true;
+    this.material.uniforms.uFrame.value = 0;
+  }
+
+  stop(): void {
+    this.playing = false;
+    this.time = 0;
+    this.lastTime = null;
   }
 
   private tick(camera: THREE.Camera): void {
@@ -66,12 +92,19 @@ export class FlipbookSprite extends THREE.Mesh {
       this.lastTime === null ? 0 : Math.min(now - this.lastTime, MAX_CLAMP_DT);
     this.lastTime = now;
 
-    this.time += dt;
-    let frame = this.time * this.fps;
-    frame = this.loop
-      ? frame % this.frameCount
-      : Math.min(frame, this.frameCount - 1);
-    this.material.uniforms.uFrame.value = frame;
+    if (this.playing && !this.completed) {
+      this.time += dt;
+      let frame = this.time * this.fps;
+      if (this.loop) {
+        frame = frame % this.frameCount;
+      } else if (frame >= this.frameCount - 1) {
+        frame = this.frameCount - 1;
+        this.completed = true;
+        this.playing = false;
+        this.onComplete?.();
+      }
+      this.material.uniforms.uFrame.value = frame;
+    }
 
     this.quaternion.copy(camera.quaternion);
     this.updateMatrixWorld(true);
