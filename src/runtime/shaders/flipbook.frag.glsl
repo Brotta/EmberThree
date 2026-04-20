@@ -16,7 +16,7 @@ void main() {
   vec2 cell = vec2(1.0 / uCols, 1.0 / uRows);
   vec2 uv = vec2((col + vUv.x) * cell.x, (atlasRow + vUv.y) * cell.y);
 
-  vec4 sample = texture2D(uAtlas, uv);
-  if (sample.a < 0.01) discard;
-  gl_FragColor = sample;
+  vec4 texel = texture2D(uAtlas, uv);
+  if (texel.a < 0.01) discard;
+  gl_FragColor = texel;
 }

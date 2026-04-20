@@ -48,6 +48,7 @@ export class FlipbookSprite extends THREE.Mesh {
       fragmentShader: flipbookFrag,
       transparent: true,
       depthWrite: false,
+      side: THREE.DoubleSide,
     });
 
     super(geometry, material);
@@ -73,6 +74,7 @@ export class FlipbookSprite extends THREE.Mesh {
     this.material.uniforms.uFrame.value = frame;
 
     this.quaternion.copy(camera.quaternion);
+    this.updateMatrixWorld(true);
   }
 
   dispose(): void {
