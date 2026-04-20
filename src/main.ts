@@ -8,6 +8,11 @@ import {
   type MuzzleFlashAtlas,
 } from './sim/muzzleFlash';
 import { FluidSim } from './sim/FluidSim';
+import {
+  bakeFlipbook,
+  downloadFlipbook,
+  type BakedFlipbook,
+} from './export/bakeFlipbook';
 
 const container = document.getElementById('app') as HTMLDivElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
@@ -166,9 +171,15 @@ const params = {
   pressureIterations: 20,
   buoyancy: 0,
   smokeMode: false,
+  bakeCols: 8,
+  bakeRows: 8,
+  bakeCellSize: 128,
+  bakeFps: 30,
+  bakeDownload: true,
   clearSim: () => fluid.clear(),
   dyePreset: () => applyDyePreset(),
   smokePreset: () => applySmokePreset(),
+  bake: () => void bakeAndSpawn(),
 };
 
 function applyDyePreset(): void {
@@ -245,9 +256,88 @@ simFolder.add(params, 'dyePreset').name('preset: dye');
 simFolder.add(params, 'smokePreset').name('preset: smoke');
 simFolder.add(params, 'clearSim').name('clear sim');
 
+const bakeFolder = gui.addFolder('Bake');
+bakeFolder.add(params, 'bakeCols', [4, 6, 8, 10]).name('cols');
+bakeFolder.add(params, 'bakeRows', [4, 6, 8, 10]).name('rows');
+bakeFolder.add(params, 'bakeCellSize', [64, 96, 128, 192, 256]).name('cell size');
+bakeFolder.add(params, 'bakeFps', 6, 60, 1).name('playback fps');
+bakeFolder.add(params, 'bakeDownload').name('download PNG+JSON');
+const bakeButton = bakeFolder.add(params, 'bake').name('bake flipbook');
+
 let autoFireAt = performance.now() / 1000 + params.fireInterval;
 let prevSimTime: number | null = null;
+let baking = false;
+let bakedSprite: FlipbookSprite | null = null;
 hud.textContent = 'EmberThree — Phase 3 · click scene to fire · space to fire';
+
+function simEmit(now: number): void {
+  if (!params.emitDye) return;
+  if (params.smokeMode) {
+    splatColorTarget.setRGB(0.9, 0.9, 0.92);
+    splatVelocity.set(Math.sin(now * 0.7) * 40, params.splatSpeed);
+  } else {
+    const hue = (now * 0.1) % 1;
+    splatColorTarget.setHSL(hue, 0.9, 0.55);
+    splatVelocity.set(Math.sin(now * 1.5) * 120, params.splatSpeed);
+  }
+  fluid.splat(splatPoint, splatColorTarget, splatVelocity, params.splatRadius);
+}
+
+async function bakeAndSpawn(): Promise<void> {
+  if (baking) return;
+  baking = true;
+  bakeButton.disable();
+  hud.textContent = 'Baking flipbook… 0%';
+  fluid.clear();
+  let simClock = 0;
+  try {
+    const baked = await bakeFlipbook(
+      renderer,
+      () => fluid.densityTexture,
+      (dt) => {
+        simClock += dt;
+        simEmit(simClock);
+        fluid.step(dt);
+      },
+      {
+        cols: params.bakeCols,
+        rows: params.bakeRows,
+        cellSize: params.bakeCellSize,
+        fps: params.bakeFps,
+        onProgress: (frame, total) => {
+          hud.textContent = `Baking flipbook… ${Math.round((frame / total) * 100)}%`;
+        },
+      },
+    );
+    spawnBakedSprite(baked);
+    if (params.bakeDownload) {
+      downloadFlipbook(baked, `emberthree-${params.smokeMode ? 'smoke' : 'dye'}`);
+    }
+    hud.textContent = 'Baked · ready for playback in scene';
+  } finally {
+    baking = false;
+    bakeButton.enable();
+  }
+}
+
+function spawnBakedSprite(baked: BakedFlipbook): void {
+  if (bakedSprite) {
+    scene.remove(bakedSprite);
+    bakedSprite.dispose();
+  }
+  bakedSprite = new FlipbookSprite({
+    texture: baked.texture,
+    cols: baked.cols,
+    rows: baked.rows,
+    frameCount: baked.frameCount,
+    fps: baked.fps,
+    size: 1.8,
+    loop: true,
+    blending: THREE.NormalBlending,
+  });
+  bakedSprite.position.set(1.6, 1.0, -0.3);
+  scene.add(bakedSprite);
+}
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -270,18 +360,10 @@ renderer.setAnimationLoop(() => {
     entry.light.intensity = 18 * flashEnvelope(t);
   }
 
-  if (params.emitDye) {
-    if (params.smokeMode) {
-      splatColorTarget.setRGB(0.9, 0.9, 0.92);
-      splatVelocity.set(Math.sin(now * 0.7) * 40, params.splatSpeed);
-    } else {
-      const hue = (now * 0.1) % 1;
-      splatColorTarget.setHSL(hue, 0.9, 0.55);
-      splatVelocity.set(Math.sin(now * 1.5) * 120, params.splatSpeed);
-    }
-    fluid.splat(splatPoint, splatColorTarget, splatVelocity, params.splatRadius);
+  if (!baking) {
+    simEmit(now);
+    fluid.step(dt);
   }
-  fluid.step(dt);
 
   renderer.setScissorTest(false);
   renderer.setViewport(
