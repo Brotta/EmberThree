@@ -137,6 +137,7 @@ const fluid = new FluidSim(renderer, {
   resolution: 256,
   velocityDissipation: 0.2,
   densityDissipation: 1.0,
+  pressureIterations: 20,
 });
 
 const previewQuad = new FullScreenQuad(
@@ -161,6 +162,7 @@ const params = {
   splatSpeed: 600,
   velocityDissipation: 0.2,
   densityDissipation: 1.0,
+  pressureIterations: 20,
   clearSim: () => fluid.clear(),
 };
 
@@ -188,6 +190,12 @@ simFolder
   .name('dye dissipation')
   .onChange((v: number) => {
     fluid.densityDissipation = v;
+  });
+simFolder
+  .add(params, 'pressureIterations', 0, 60, 1)
+  .name('pressure iter')
+  .onChange((v: number) => {
+    fluid.pressureIterations = v;
   });
 simFolder.add(params, 'clearSim').name('clear sim');
 

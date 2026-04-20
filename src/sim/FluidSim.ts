@@ -3,11 +3,15 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import fullscreenVert from './shaders/fullscreen.vert.glsl?raw';
 import splatFrag from './shaders/splat.frag.glsl?raw';
 import advectionFrag from './shaders/advection.frag.glsl?raw';
+import divergenceFrag from './shaders/divergence.frag.glsl?raw';
+import pressureFrag from './shaders/pressure.frag.glsl?raw';
+import gradientSubtractFrag from './shaders/gradientSubtract.frag.glsl?raw';
 
 export interface FluidSimConfig {
   resolution?: number;
   velocityDissipation?: number;
   densityDissipation?: number;
+  pressureIterations?: number;
 }
 
 interface PingPong {
@@ -46,20 +50,44 @@ function createPingPong(width: number, height: number): PingPong {
   };
 }
 
+function createRenderTarget(
+  width: number,
+  height: number,
+): THREE.WebGLRenderTarget {
+  return new THREE.WebGLRenderTarget(width, height, {
+    format: THREE.RGBAFormat,
+    type: THREE.HalfFloatType,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    generateMipmaps: false,
+    depthBuffer: false,
+    stencilBuffer: false,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+  });
+}
+
 export class FluidSim {
   readonly resolution: number;
   readonly aspect: number;
 
   velocityDissipation: number;
   densityDissipation: number;
+  pressureIterations: number;
 
   private renderer: THREE.WebGLRenderer;
   private quad: FullScreenQuad;
+
   private density: PingPong;
   private velocity: PingPong;
+  private pressure: PingPong;
+  private divergence: THREE.WebGLRenderTarget;
 
   private splatMaterial: THREE.ShaderMaterial;
   private advectionMaterial: THREE.ShaderMaterial;
+  private divergenceMaterial: THREE.ShaderMaterial;
+  private pressureMaterial: THREE.ShaderMaterial;
+  private gradientSubtractMaterial: THREE.ShaderMaterial;
 
   constructor(renderer: THREE.WebGLRenderer, config: FluidSimConfig = {}) {
     const resolution = config.resolution ?? 256;
@@ -68,9 +96,14 @@ export class FluidSim {
     this.renderer = renderer;
     this.velocityDissipation = config.velocityDissipation ?? 0.2;
     this.densityDissipation = config.densityDissipation ?? 1.0;
+    this.pressureIterations = config.pressureIterations ?? 20;
 
     this.density = createPingPong(resolution, resolution);
     this.velocity = createPingPong(resolution, resolution);
+    this.pressure = createPingPong(resolution, resolution);
+    this.divergence = createRenderTarget(resolution, resolution);
+
+    const texelSize = new THREE.Vector2(1 / resolution, 1 / resolution);
 
     this.splatMaterial = new THREE.ShaderMaterial({
       uniforms: {
@@ -90,14 +123,47 @@ export class FluidSim {
       uniforms: {
         uVelocity: { value: null },
         uSource: { value: null },
-        uTexelSize: {
-          value: new THREE.Vector2(1 / resolution, 1 / resolution),
-        },
+        uTexelSize: { value: texelSize.clone() },
         uDt: { value: 0 },
         uDissipation: { value: 0 },
       },
       vertexShader: fullscreenVert,
       fragmentShader: advectionFrag,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    this.divergenceMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uVelocity: { value: null },
+        uTexelSize: { value: texelSize.clone() },
+      },
+      vertexShader: fullscreenVert,
+      fragmentShader: divergenceFrag,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    this.pressureMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uPressure: { value: null },
+        uDivergence: { value: null },
+        uTexelSize: { value: texelSize.clone() },
+      },
+      vertexShader: fullscreenVert,
+      fragmentShader: pressureFrag,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    this.gradientSubtractMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uVelocity: { value: null },
+        uPressure: { value: null },
+        uTexelSize: { value: texelSize.clone() },
+      },
+      vertexShader: fullscreenVert,
+      fragmentShader: gradientSubtractFrag,
       depthTest: false,
       depthWrite: false,
     });
@@ -142,6 +208,9 @@ export class FluidSim {
       this.density.write,
       this.velocity.read,
       this.velocity.write,
+      this.pressure.read,
+      this.pressure.write,
+      this.divergence,
     ]) {
       this.renderer.setRenderTarget(rt);
       this.renderer.clear();
@@ -150,19 +219,39 @@ export class FluidSim {
   }
 
   step(dt: number): void {
-    const uniforms = this.advectionMaterial.uniforms;
-    uniforms.uDt.value = dt;
-    uniforms.uTexelSize.value.set(1 / this.resolution, 1 / this.resolution);
+    const advU = this.advectionMaterial.uniforms;
+    advU.uDt.value = dt;
 
-    uniforms.uVelocity.value = this.velocity.read.texture;
-    uniforms.uSource.value = this.velocity.read.texture;
-    uniforms.uDissipation.value = this.velocityDissipation;
+    advU.uVelocity.value = this.velocity.read.texture;
+    advU.uSource.value = this.velocity.read.texture;
+    advU.uDissipation.value = this.velocityDissipation;
     this.runPass(this.advectionMaterial, this.velocity.write);
     this.velocity.swap();
 
-    uniforms.uVelocity.value = this.velocity.read.texture;
-    uniforms.uSource.value = this.density.read.texture;
-    uniforms.uDissipation.value = this.densityDissipation;
+    this.divergenceMaterial.uniforms.uVelocity.value =
+      this.velocity.read.texture;
+    this.runPass(this.divergenceMaterial, this.divergence);
+
+    this.renderer.setRenderTarget(this.pressure.read);
+    this.renderer.clear();
+
+    this.pressureMaterial.uniforms.uDivergence.value = this.divergence.texture;
+    for (let i = 0; i < this.pressureIterations; i++) {
+      this.pressureMaterial.uniforms.uPressure.value =
+        this.pressure.read.texture;
+      this.runPass(this.pressureMaterial, this.pressure.write);
+      this.pressure.swap();
+    }
+
+    const gsU = this.gradientSubtractMaterial.uniforms;
+    gsU.uVelocity.value = this.velocity.read.texture;
+    gsU.uPressure.value = this.pressure.read.texture;
+    this.runPass(this.gradientSubtractMaterial, this.velocity.write);
+    this.velocity.swap();
+
+    advU.uVelocity.value = this.velocity.read.texture;
+    advU.uSource.value = this.density.read.texture;
+    advU.uDissipation.value = this.densityDissipation;
     this.runPass(this.advectionMaterial, this.density.write);
     this.density.swap();
   }
@@ -173,16 +262,19 @@ export class FluidSim {
   ): void {
     this.quad.material = material;
     this.renderer.setRenderTarget(target);
-    this.renderer.clear();
     this.quad.render(this.renderer);
-    this.renderer.setRenderTarget(null);
   }
 
   dispose(): void {
     this.density.dispose();
     this.velocity.dispose();
+    this.pressure.dispose();
+    this.divergence.dispose();
     this.splatMaterial.dispose();
     this.advectionMaterial.dispose();
+    this.divergenceMaterial.dispose();
+    this.pressureMaterial.dispose();
+    this.gradientSubtractMaterial.dispose();
     this.quad.dispose();
   }
 }
