@@ -161,6 +161,7 @@ const params = {
   splatSpeed: 600,
   velocityDissipation: 0.2,
   densityDissipation: 1.0,
+  clearSim: () => fluid.clear(),
 };
 
 const splatColorTarget = new THREE.Color();
@@ -188,6 +189,7 @@ simFolder
   .onChange((v: number) => {
     fluid.densityDissipation = v;
   });
+simFolder.add(params, 'clearSim').name('clear sim');
 
 let autoFireAt = performance.now() / 1000 + params.fireInterval;
 let prevSimTime: number | null = null;
@@ -261,3 +263,51 @@ function isEventInsidePreview(e: MouseEvent): boolean {
     e.clientY <= rect.bottom
   );
 }
+
+interface DragState {
+  x: number;
+  y: number;
+  t: number;
+}
+let dragging: DragState | null = null;
+const dragColor = new THREE.Color();
+const dragPoint = new THREE.Vector2();
+const dragVelocity = new THREE.Vector2();
+
+previewFrame.style.cursor = 'crosshair';
+previewFrame.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  (e.target as Element).setPointerCapture(e.pointerId);
+  const rect = previewFrame.getBoundingClientRect();
+  dragging = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+    t: performance.now() / 1000,
+  };
+  dragColor.setHSL(Math.random(), 0.9, 0.55);
+});
+
+previewFrame.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const rect = previewFrame.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const t = performance.now() / 1000;
+  const dt = Math.max(t - dragging.t, 1 / 120);
+
+  dragPoint.set(x / rect.width, 1 - y / rect.height);
+  dragVelocity.set(
+    ((x - dragging.x) / dt) * 3,
+    (-(y - dragging.y) / dt) * 3,
+  );
+  fluid.splat(dragPoint, dragColor, dragVelocity, params.splatRadius * 3);
+
+  dragging = { x, y, t };
+});
+
+const endDrag = (): void => {
+  dragging = null;
+};
+previewFrame.addEventListener('pointerup', endDrag);
+previewFrame.addEventListener('pointercancel', endDrag);
+previewFrame.addEventListener('pointerleave', endDrag);

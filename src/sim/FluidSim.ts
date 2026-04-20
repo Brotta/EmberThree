@@ -135,6 +135,20 @@ export class FluidSim {
     this.velocity.swap();
   }
 
+  clear(): void {
+    const prev = this.renderer.getRenderTarget();
+    for (const rt of [
+      this.density.read,
+      this.density.write,
+      this.velocity.read,
+      this.velocity.write,
+    ]) {
+      this.renderer.setRenderTarget(rt);
+      this.renderer.clear();
+    }
+    this.renderer.setRenderTarget(prev);
+  }
+
   step(dt: number): void {
     const uniforms = this.advectionMaterial.uniforms;
     uniforms.uDt.value = dt;
