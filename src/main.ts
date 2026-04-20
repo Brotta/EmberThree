@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FlipbookSprite, generateTestAtlas } from './runtime';
 
 const container = document.getElementById('app') as HTMLDivElement;
 
@@ -6,6 +7,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x0b0d10);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -17,7 +19,7 @@ const camera = new THREE.PerspectiveCamera(
   100,
 );
 camera.position.set(2.5, 2, 3.5);
-camera.lookAt(0, 0.5, 0);
+camera.lookAt(0, 0.8, 0);
 
 const hemi = new THREE.HemisphereLight(0xffffff, 0x334455, 0.8);
 scene.add(hemi);
@@ -34,11 +36,22 @@ ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
 const marker = new THREE.Mesh(
-  new THREE.BoxGeometry(0.4, 0.4, 0.4),
+  new THREE.BoxGeometry(0.3, 0.3, 0.3),
   new THREE.MeshStandardMaterial({ color: 0xff5533 }),
 );
-marker.position.set(0, 0.2, 0);
+marker.position.set(-1.2, 0.15, 0);
 scene.add(marker);
+
+const atlas = generateTestAtlas({ cols: 8, rows: 8, cellSize: 64 });
+const flipbook = new FlipbookSprite({
+  texture: atlas,
+  cols: 8,
+  rows: 8,
+  fps: 24,
+  size: 1.2,
+});
+flipbook.position.set(0.4, 0.8, 0);
+scene.add(flipbook);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -46,10 +59,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const clock = new THREE.Clock();
-
 renderer.setAnimationLoop(() => {
-  const t = clock.getElapsedTime();
-  marker.rotation.y = t * 0.6;
   renderer.render(scene, camera);
 });
