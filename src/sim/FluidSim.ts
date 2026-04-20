@@ -2,9 +2,12 @@ import * as THREE from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import fullscreenVert from './shaders/fullscreen.vert.glsl?raw';
 import splatFrag from './shaders/splat.frag.glsl?raw';
+import advectionFrag from './shaders/advection.frag.glsl?raw';
 
 export interface FluidSimConfig {
   resolution?: number;
+  velocityDissipation?: number;
+  densityDissipation?: number;
 }
 
 interface PingPong {
@@ -47,18 +50,24 @@ export class FluidSim {
   readonly resolution: number;
   readonly aspect: number;
 
+  velocityDissipation: number;
+  densityDissipation: number;
+
   private renderer: THREE.WebGLRenderer;
   private quad: FullScreenQuad;
   private density: PingPong;
   private velocity: PingPong;
 
   private splatMaterial: THREE.ShaderMaterial;
+  private advectionMaterial: THREE.ShaderMaterial;
 
   constructor(renderer: THREE.WebGLRenderer, config: FluidSimConfig = {}) {
     const resolution = config.resolution ?? 256;
     this.resolution = resolution;
     this.aspect = 1;
     this.renderer = renderer;
+    this.velocityDissipation = config.velocityDissipation ?? 0.2;
+    this.densityDissipation = config.densityDissipation ?? 1.0;
 
     this.density = createPingPong(resolution, resolution);
     this.velocity = createPingPong(resolution, resolution);
@@ -73,6 +82,22 @@ export class FluidSim {
       },
       vertexShader: fullscreenVert,
       fragmentShader: splatFrag,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    this.advectionMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uVelocity: { value: null },
+        uSource: { value: null },
+        uTexelSize: {
+          value: new THREE.Vector2(1 / resolution, 1 / resolution),
+        },
+        uDt: { value: 0 },
+        uDissipation: { value: 0 },
+      },
+      vertexShader: fullscreenVert,
+      fragmentShader: advectionFrag,
       depthTest: false,
       depthWrite: false,
     });
@@ -110,8 +135,22 @@ export class FluidSim {
     this.velocity.swap();
   }
 
-  step(_dt: number): void {
-    // Advection, pressure, etc. land in later milestones.
+  step(dt: number): void {
+    const uniforms = this.advectionMaterial.uniforms;
+    uniforms.uDt.value = dt;
+    uniforms.uTexelSize.value.set(1 / this.resolution, 1 / this.resolution);
+
+    uniforms.uVelocity.value = this.velocity.read.texture;
+    uniforms.uSource.value = this.velocity.read.texture;
+    uniforms.uDissipation.value = this.velocityDissipation;
+    this.runPass(this.advectionMaterial, this.velocity.write);
+    this.velocity.swap();
+
+    uniforms.uVelocity.value = this.velocity.read.texture;
+    uniforms.uSource.value = this.density.read.texture;
+    uniforms.uDissipation.value = this.densityDissipation;
+    this.runPass(this.advectionMaterial, this.density.write);
+    this.density.swap();
   }
 
   private runPass(
@@ -129,6 +168,7 @@ export class FluidSim {
     this.density.dispose();
     this.velocity.dispose();
     this.splatMaterial.dispose();
+    this.advectionMaterial.dispose();
     this.quad.dispose();
   }
 }

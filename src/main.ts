@@ -133,19 +133,11 @@ function buildGun(): THREE.Group {
   return group;
 }
 
-const fluid = new FluidSim(renderer, { resolution: 256 });
-
-seedInitialSplats(fluid);
-
-function seedInitialSplats(sim: FluidSim): void {
-  const palette = [0xff4422, 0x22aaff, 0xffcc33];
-  for (let i = 0; i < 3; i++) {
-    const color = new THREE.Color(palette[i]);
-    const point = new THREE.Vector2(0.35 + i * 0.15, 0.5);
-    const vel = new THREE.Vector2((i - 1) * 400, 0);
-    sim.splat(point, color, vel, 0.0012);
-  }
-}
+const fluid = new FluidSim(renderer, {
+  resolution: 256,
+  velocityDissipation: 0.2,
+  densityDissipation: 1.0,
+});
 
 const previewQuad = new FullScreenQuad(
   new THREE.MeshBasicMaterial({ map: fluid.densityTexture, toneMapped: false }),
@@ -164,21 +156,41 @@ window.addEventListener('keydown', (e) => {
 const params = {
   autoFire: true,
   fireInterval: 1.0,
-  simResolution: 256,
-  reseedSim: () => {
-    seedInitialSplats(fluid);
-  },
+  emitDye: true,
+  splatRadius: 0.00016,
+  splatSpeed: 600,
+  velocityDissipation: 0.2,
+  densityDissipation: 1.0,
 };
+
+const splatColorTarget = new THREE.Color();
+const splatPoint = new THREE.Vector2(0.5, 0.12);
+const splatVelocity = new THREE.Vector2();
 
 const gui = new GUI({ title: 'EmberThree' });
 const fxFolder = gui.addFolder('Muzzle flash');
 fxFolder.add(params, 'autoFire').name('auto-fire');
 fxFolder.add(params, 'fireInterval', 0.15, 3, 0.05).name('interval (s)');
+
 const simFolder = gui.addFolder('Fluid sim');
-simFolder.add(params, 'simResolution', [128, 256, 512]).name('resolution').disable();
-simFolder.add(params, 'reseedSim').name('re-seed splats');
+simFolder.add(params, 'emitDye').name('emit dye');
+simFolder.add(params, 'splatRadius', 0.00005, 0.001, 0.00001).name('splat radius');
+simFolder.add(params, 'splatSpeed', 0, 2000, 10).name('splat speed');
+simFolder
+  .add(params, 'velocityDissipation', 0, 4, 0.05)
+  .name('vel dissipation')
+  .onChange((v: number) => {
+    fluid.velocityDissipation = v;
+  });
+simFolder
+  .add(params, 'densityDissipation', 0, 4, 0.05)
+  .name('dye dissipation')
+  .onChange((v: number) => {
+    fluid.densityDissipation = v;
+  });
 
 let autoFireAt = performance.now() / 1000 + params.fireInterval;
+let prevSimTime: number | null = null;
 hud.textContent = 'EmberThree — Phase 3 · click scene to fire · space to fire';
 
 window.addEventListener('resize', () => {
@@ -187,8 +199,10 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-renderer.setAnimationLoop((_, __) => {
+renderer.setAnimationLoop(() => {
   const now = performance.now() / 1000;
+  const dt = prevSimTime === null ? 1 / 60 : Math.min(now - prevSimTime, 1 / 30);
+  prevSimTime = now;
 
   if (params.autoFire && now >= autoFireAt) {
     fire();
@@ -199,6 +213,14 @@ renderer.setAnimationLoop((_, __) => {
     const t = Math.min((now - entry.startTime) / entry.duration, 1);
     entry.light.intensity = 18 * flashEnvelope(t);
   }
+
+  if (params.emitDye) {
+    const hue = (now * 0.1) % 1;
+    splatColorTarget.setHSL(hue, 0.9, 0.55);
+    splatVelocity.set(Math.sin(now * 1.5) * 120, params.splatSpeed);
+    fluid.splat(splatPoint, splatColorTarget, splatVelocity, params.splatRadius);
+  }
+  fluid.step(dt);
 
   renderer.setScissorTest(false);
   renderer.setViewport(
