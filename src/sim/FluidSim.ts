@@ -6,12 +6,14 @@ import advectionFrag from './shaders/advection.frag.glsl?raw';
 import divergenceFrag from './shaders/divergence.frag.glsl?raw';
 import pressureFrag from './shaders/pressure.frag.glsl?raw';
 import gradientSubtractFrag from './shaders/gradientSubtract.frag.glsl?raw';
+import buoyancyFrag from './shaders/buoyancy.frag.glsl?raw';
 
 export interface FluidSimConfig {
   resolution?: number;
   velocityDissipation?: number;
   densityDissipation?: number;
   pressureIterations?: number;
+  buoyancy?: number;
 }
 
 interface PingPong {
@@ -74,6 +76,7 @@ export class FluidSim {
   velocityDissipation: number;
   densityDissipation: number;
   pressureIterations: number;
+  buoyancy: number;
 
   private renderer: THREE.WebGLRenderer;
   private quad: FullScreenQuad;
@@ -88,6 +91,7 @@ export class FluidSim {
   private divergenceMaterial: THREE.ShaderMaterial;
   private pressureMaterial: THREE.ShaderMaterial;
   private gradientSubtractMaterial: THREE.ShaderMaterial;
+  private buoyancyMaterial: THREE.ShaderMaterial;
 
   constructor(renderer: THREE.WebGLRenderer, config: FluidSimConfig = {}) {
     const resolution = config.resolution ?? 256;
@@ -97,6 +101,7 @@ export class FluidSim {
     this.velocityDissipation = config.velocityDissipation ?? 0.2;
     this.densityDissipation = config.densityDissipation ?? 1.0;
     this.pressureIterations = config.pressureIterations ?? 20;
+    this.buoyancy = config.buoyancy ?? 0;
 
     this.density = createPingPong(resolution, resolution);
     this.velocity = createPingPong(resolution, resolution);
@@ -168,6 +173,19 @@ export class FluidSim {
       depthWrite: false,
     });
 
+    this.buoyancyMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uVelocity: { value: null },
+        uDensity: { value: null },
+        uBuoyancy: { value: 0 },
+        uDt: { value: 0 },
+      },
+      vertexShader: fullscreenVert,
+      fragmentShader: buoyancyFrag,
+      depthTest: false,
+      depthWrite: false,
+    });
+
     this.quad = new FullScreenQuad();
   }
 
@@ -228,6 +246,16 @@ export class FluidSim {
     this.runPass(this.advectionMaterial, this.velocity.write);
     this.velocity.swap();
 
+    if (this.buoyancy !== 0) {
+      const bu = this.buoyancyMaterial.uniforms;
+      bu.uVelocity.value = this.velocity.read.texture;
+      bu.uDensity.value = this.density.read.texture;
+      bu.uBuoyancy.value = this.buoyancy;
+      bu.uDt.value = dt;
+      this.runPass(this.buoyancyMaterial, this.velocity.write);
+      this.velocity.swap();
+    }
+
     this.divergenceMaterial.uniforms.uVelocity.value =
       this.velocity.read.texture;
     this.runPass(this.divergenceMaterial, this.divergence);
@@ -275,6 +303,7 @@ export class FluidSim {
     this.divergenceMaterial.dispose();
     this.pressureMaterial.dispose();
     this.gradientSubtractMaterial.dispose();
+    this.buoyancyMaterial.dispose();
     this.quad.dispose();
   }
 }

@@ -138,6 +138,7 @@ const fluid = new FluidSim(renderer, {
   velocityDissipation: 0.2,
   densityDissipation: 1.0,
   pressureIterations: 20,
+  buoyancy: 0,
 });
 
 const previewQuad = new FullScreenQuad(
@@ -163,8 +164,45 @@ const params = {
   velocityDissipation: 0.2,
   densityDissipation: 1.0,
   pressureIterations: 20,
+  buoyancy: 0,
+  smokeMode: false,
   clearSim: () => fluid.clear(),
+  dyePreset: () => applyDyePreset(),
+  smokePreset: () => applySmokePreset(),
 };
+
+function applyDyePreset(): void {
+  params.emitDye = true;
+  params.splatRadius = 0.00016;
+  params.splatSpeed = 600;
+  params.velocityDissipation = 0.2;
+  params.densityDissipation = 1.0;
+  params.buoyancy = 0;
+  params.smokeMode = false;
+  syncSimParams();
+  gui.controllers.forEach((c) => c.updateDisplay());
+  simFolder.controllers.forEach((c) => c.updateDisplay());
+}
+
+function applySmokePreset(): void {
+  params.emitDye = true;
+  params.splatRadius = 0.00045;
+  params.splatSpeed = 120;
+  params.velocityDissipation = 0.08;
+  params.densityDissipation = 0.4;
+  params.buoyancy = 35;
+  params.smokeMode = true;
+  syncSimParams();
+  gui.controllers.forEach((c) => c.updateDisplay());
+  simFolder.controllers.forEach((c) => c.updateDisplay());
+}
+
+function syncSimParams(): void {
+  fluid.velocityDissipation = params.velocityDissipation;
+  fluid.densityDissipation = params.densityDissipation;
+  fluid.pressureIterations = params.pressureIterations;
+  fluid.buoyancy = params.buoyancy;
+}
 
 const splatColorTarget = new THREE.Color();
 const splatPoint = new THREE.Vector2(0.5, 0.12);
@@ -197,6 +235,14 @@ simFolder
   .onChange((v: number) => {
     fluid.pressureIterations = v;
   });
+simFolder
+  .add(params, 'buoyancy', 0, 80, 1)
+  .name('buoyancy')
+  .onChange((v: number) => {
+    fluid.buoyancy = v;
+  });
+simFolder.add(params, 'dyePreset').name('preset: dye');
+simFolder.add(params, 'smokePreset').name('preset: smoke');
 simFolder.add(params, 'clearSim').name('clear sim');
 
 let autoFireAt = performance.now() / 1000 + params.fireInterval;
@@ -225,9 +271,14 @@ renderer.setAnimationLoop(() => {
   }
 
   if (params.emitDye) {
-    const hue = (now * 0.1) % 1;
-    splatColorTarget.setHSL(hue, 0.9, 0.55);
-    splatVelocity.set(Math.sin(now * 1.5) * 120, params.splatSpeed);
+    if (params.smokeMode) {
+      splatColorTarget.setRGB(0.9, 0.9, 0.92);
+      splatVelocity.set(Math.sin(now * 0.7) * 40, params.splatSpeed);
+    } else {
+      const hue = (now * 0.1) % 1;
+      splatColorTarget.setHSL(hue, 0.9, 0.55);
+      splatVelocity.set(Math.sin(now * 1.5) * 120, params.splatSpeed);
+    }
     fluid.splat(splatPoint, splatColorTarget, splatVelocity, params.splatRadius);
   }
   fluid.step(dt);
