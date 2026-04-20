@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { FlipbookSprite, generateTestAtlas } from './runtime';
+import { FlipbookSprite } from './runtime';
+import { generateMuzzleFlashAtlas } from './sim/muzzleFlash';
 
 const container = document.getElementById('app') as HTMLDivElement;
 
@@ -42,13 +43,15 @@ const marker = new THREE.Mesh(
 marker.position.set(-1.2, 0.15, 0);
 scene.add(marker);
 
-const atlas = generateTestAtlas({ cols: 8, rows: 8, cellSize: 64 });
+const flash = generateMuzzleFlashAtlas();
 const flipbook = new FlipbookSprite({
-  texture: atlas,
-  cols: 8,
-  rows: 8,
-  fps: 24,
+  texture: flash.texture,
+  cols: flash.cols,
+  rows: flash.rows,
+  frameCount: flash.frameCount,
+  fps: flash.fps,
   size: 1.2,
+  blending: THREE.AdditiveBlending,
 });
 flipbook.position.set(0.4, 0.8, 0);
 scene.add(flipbook);
