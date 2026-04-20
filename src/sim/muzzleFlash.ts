@@ -81,7 +81,7 @@ export function generateMuzzleFlashAtlas(
   return { texture, cols, rows, frameCount, fps };
 }
 
-function flashEnvelope(t: number): number {
+export function flashEnvelope(t: number): number {
   const peakT = 0.15;
   const attack = t / peakT;
   const decay = 1 - (t - peakT) / (1 - peakT);
